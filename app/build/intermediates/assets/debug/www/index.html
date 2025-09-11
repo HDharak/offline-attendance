@@ -1,0 +1,135 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Face Attendance (WebView)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { font-family: Arial; margin: 6px; }
+    #video { width: 100%; max-width: 720px; border: 1px solid #444; }
+    #controls { margin-top:8px; }
+    .btn { padding:8px 12px; margin-right:6px; }
+    #log { white-space:pre-wrap; max-height:200px; overflow:auto; background:#f7f7f7; padding:6px; border:1px solid #ddd }
+  </style>
+</head>
+<body>
+  <h3>Face Attendance — WebView</h3>
+  <video id="video" autoplay muted></video>
+  <div id="controls">
+    <input id="name" placeholder="Name or Employee ID" />
+    <button id="enrollBtn" class="btn">Enroll</button>
+    <button id="clearBtn" class="btn">Clear DB</button>
+    <label><input id="autoLog" type="checkbox" checked> Auto-log on recognized</label>
+    <button id="downloadDb" class="btn">Export DB</button>
+  </div>
+  <div style="margin-top:10px">
+    <button id="startRec" class="btn">Start Recognition</button>
+    <button id="stopRec" class="btn">Stop</button>
+  </div>
+  <h4>Log</h4>
+  <div id="log"></div>
+
+  <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
+
+  <script>
+  const MODEL_URL = './models'
+  const LOG = (s) => { document.getElementById('log').textContent = s + "\\n" + document.getElementById('log').textContent }
+
+  function saveDB(db) { localStorage.setItem('face_db_v1', JSON.stringify(db)) }
+  function loadDB() { const j = localStorage.getItem('face_db_v1'); return j ? JSON.parse(j) : {} }
+  function exportDB() { const a = document.createElement('a'); a.href = 'data:application/json,' + encodeURIComponent(localStorage.getItem('face_db_v1')||'{}'); a.download='face_db.json'; a.click(); }
+
+  let video = document.getElementById('video')
+  let enrollBtn = document.getElementById('enrollBtn'), nameInput = document.getElementById('name')
+  let startRec = document.getElementById('startRec'), stopRec = document.getElementById('stopRec')
+  let clearBtn = document.getElementById('clearBtn'), downloadDb = document.getElementById('downloadDb')
+  let autoLog = document.getElementById('autoLog')
+
+  let faceMatcher = null
+  let running = false
+  let db = loadDB()
+  let lastLog = {}
+
+  async function init() {
+    LOG('Loading models (may take 10-30s first time)...')
+    // try local models first; if not present, CDN fallback handled by face-api library
+    await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL)
+    await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL)
+    await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+    LOG('Models loaded.')
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+    video.srcObject = stream
+    await video.play()
+    rebuildMatcher()
+    LOG('Ready. Enter name and press Enroll.')
+  }
+
+  function rebuildMatcher() {
+    const labels = Object.keys(db)
+    const labeled = labels.map(lbl => {
+      const descs = db[lbl].map(d => new Float32Array(d))
+      return new faceapi.LabeledFaceDescriptors(lbl, descs)
+    })
+    faceMatcher = labeled.length ? new faceapi.FaceMatcher(labeled, 0.6) : null
+    LOG('Matcher rebuilt: ' + (labels.length) + ' labels')
+  }
+
+  enrollBtn.onclick = async () => {
+    const label = (nameInput.value || '').trim()
+    if (!label) { alert('Enter name/ID'); return }
+    LOG('Enrolling: ' + label + ' (3 frames).')
+    const captures = []
+    for (let i=0;i<3;i++) {
+      await new Promise(r => setTimeout(r, 800))
+      const detections = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks(true).withFaceDescriptor()
+      if (!detections) { LOG('Frame ' + (i+1) + ': no face'); continue }
+      captures.push(Array.from(detections.descriptor))
+      LOG('Frame ' + (i+1) + ' captured')
+    }
+    if (!captures.length) { LOG('No usable captures'); return }
+    if (!db[label]) db[label] = []
+    captures.forEach(c => db[label].push(c))
+    saveDB(db)
+    rebuildMatcher()
+    LOG('Enrolled ' + label + ' with ' + captures.length + ' descriptors.')
+  }
+
+  clearBtn.onclick = () => { if (confirm('Clear local database?')) { localStorage.removeItem('face_db_v1'); db = {}; rebuildMatcher(); LOG('DB cleared') } }
+  downloadDb.onclick = () => exportDB()
+
+  startRec.onclick = () => { if (!running) { running = true; recLoop(); LOG('Recognition started') } }
+  stopRec.onclick = () => { running = false; LOG('Recognition stopped') }
+
+  async function recLoop() {
+    while (running) {
+      const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks(true).withFaceDescriptor()
+      if (detection && faceMatcher) {
+        const best = faceMatcher.findBestMatch(detection.descriptor)
+        const label = best.toString()
+        const parts = label.split(' ')
+        const name = parts[0]
+        const dist = parseFloat(parts[parts.length-1].replace('(','').replace(')',''))
+        if (name !== 'unknown' && autoLog.checked) {
+          const now = Date.now()
+          if (!lastLog[name] || (now - lastLog[name]) > 30_000) {
+            lastLog[name] = now
+            LOG('Recognized: ' + name + ' dist=' + dist.toFixed(3))
+            const YOUR_WEB_APP_URL = ''
+            if (YOUR_WEB_APP_URL) {
+              fetch(YOUR_WEB_APP_URL, {
+                method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:name, name:name, action:'IN', timestamp:new Date().toISOString()})
+              }).then(r=>LOG('Posted to sheet')).catch(e=>LOG('Sheet post failed:'+e))
+            }
+          }
+        }
+      }
+      await new Promise(r => setTimeout(r, 400))
+    }
+  }
+
+  window.onload = () => {
+    init().catch(e=>LOG('Init error:'+e))
+  }
+  </script>
+</body>
+</html>

@@ -9,7 +9,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # use workspace path (safe at parse time)
       ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
 
     steps:
@@ -23,7 +22,9 @@ jobs:
           distribution: temurin
 
       - name: Install prerequisites
-        run: sudo apt-get update -y && sudo apt-get install -y unzip wget zip apksigner
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y unzip wget zip apksigner
 
       - name: Download Android cmdline-tools
         run: |
@@ -40,26 +41,23 @@ jobs:
           fi
           rm -f cmdline-tools.zip
 
-      - name: Add sdkmanager to PATH and accept licenses
-        env:
-          PATH: ${{ github.workspace }}/android-sdk/cmdline-tools/latest/bin:${PATH}
+      - name: Accept licenses (sdkmanager on PATH for this step)
         run: |
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
           yes | sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --licenses || true
 
       - name: Install SDK components
-        env:
-          PATH: ${{ github.workspace }}/android-sdk/cmdline-tools/latest/bin:${PATH}
         run: |
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
           sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
-
-      - name: Build unsigned release APK
+      - name: Make gradlew executable and build unsigned release APK
+        run: |
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
         env:
-          PATH: ${{ github.workspace }}/android-sdk/cmdline-tools/latest/bin:${PATH}
           ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Upload unsigned release (debug info)
         uses: actions/upload-artifact@v4
@@ -69,7 +67,6 @@ jobs:
 
       - name: Prepare keystore and sign if KEYSTORE_BASE64 secret set
         env:
-          # note: secrets are safe to reference inside run step env
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}

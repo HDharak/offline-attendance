@@ -1,4 +1,4 @@
-name: Android CI - Build APK (self-contained SDK install)
+name: Android CI - Build APK (self-contained SDK install + cache)
 
 on:
   push:
@@ -10,71 +10,87 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-- name: Install prerequisites
-
-  env:
-    ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
-  run: |
-    mkdir -p "$ANDROID_SDK_ROOT"
-    # ... rest of commands
+    env:
+      ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: temurin
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-cache-${{ runner.os }}-${{ hashFiles('**/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-cache-${{ runner.os }}-
 
-    - name: Install prerequisites
-      run: |
-        sudo apt-get update -y
-        sudo apt-get install -y unzip wget zip
+      - name: Cache Android SDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/android-sdk
+          key: android-sdk-${{ runner.os }}-v1-${{ hashFiles('.github/workflows/**') }}
+          restore-keys: |
+            android-sdk-${{ runner.os }}-v1-
 
-    - name: Download Android command-line tools
-      run: |
-        mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools"
-        cd "${ANDROID_SDK_ROOT}"
-        TOOL_ZIP="commandlinetools-linux-11076708_latest.zip"
-        URL="https://dl.google.com/android/repository/${TOOL_ZIP}"
-        wget -q --show-progress -O cmdline-tools.zip "$URL" || (echo "cmdline-tools download failed" && exit 2)
-        unzip -q -o cmdline-tools.zip -d cmdline-tools
-        mkdir -p cmdline-tools/latest
-        if [ -d cmdline-tools/cmdline-tools ]; then
-          mv -f cmdline-tools/cmdline-tools/* cmdline-tools/latest/ || true
-        else
-          mv -f cmdline-tools/* cmdline-tools/latest/ || true
-        fi
-        rm -f cmdline-tools.zip
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
 
-    - name: Add sdkmanager to PATH and accept licenses
-      env:
-        ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
-        PATH: ${{ env.ANDROID_SDK_ROOT }}/cmdline-tools/latest/bin:${PATH}
-      run: |
-        yes | sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --licenses || true
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y unzip wget zip
 
-    - name: Install platform-tools, platform and build-tools
-      env:
-        ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
-        PATH: ${{ env.ANDROID_SDK_ROOT }}/cmdline-tools/latest/bin:${PATH}
-      run: |
-        sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+      - name: Download Android command-line tools (if missing)
+        run: |
+          if [ ! -d "${ANDROID_SDK_ROOT}/cmdline-tools/latest" ]; then
+            mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools"
+            cd "${ANDROID_SDK_ROOT}"
+            TOOL_ZIP="commandlinetools-linux-11076708_latest.zip"
+            URL="https://dl.google.com/android/repository/${TOOL_ZIP}"
+            wget -q --show-progress -O cmdline-tools.zip "$URL" || (echo "cmdline-tools download failed" && exit 2)
+            unzip -q -o cmdline-tools.zip -d cmdline-tools
+            mkdir -p cmdline-tools/latest
+            if [ -d cmdline-tools/cmdline-tools ]; then
+              mv -f cmdline-tools/cmdline-tools/* cmdline-tools/latest/ || true
+            else
+              mv -f cmdline-tools/* cmdline-tools/latest/ || true
+            fi
+            rm -f cmdline-tools.zip
+          else
+            echo "cmdline-tools already present in cache, skipping download"
+          fi
 
-    - name: Make gradlew executable
-      run: chmod +x ./gradlew
+      - name: Accept licenses (sdkmanager)
+        run: |
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" --licenses || true
 
-    - name: Build (assembleDebug)
-      env:
-        ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
-        PATH: ${{ env.ANDROID_SDK_ROOT }}/cmdline-tools/latest/bin:${PATH}
-      run: ./gradlew assembleDebug --no-daemon --stacktrace
+      - name: Install platform-tools, platform and build-tools (if missing)
+        run: |
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          # check if build-tools/34.0.0 already present to avoid repeated downloads
+          if [ ! -d "${ANDROID_SDK_ROOT}/build-tools/34.0.0" ] || [ ! -d "${ANDROID_SDK_ROOT}/platforms/android-34" ]; then
+            sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          else
+            echo "platform-tools/platforms/build-tools already present in cache"
+          fi
 
-    - name: Upload debug APK artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: app-debug-apk
-        path: |
-          **/app/build/outputs/apk/debug/*.apk
+      - name: Make gradlew executable and build debug APK
+        run: |
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+        env:
+          ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: '**/app/build/outputs/apk/debug/*.apk'

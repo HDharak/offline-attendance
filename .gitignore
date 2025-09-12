@@ -7,3 +7,18 @@
 /.gradle
 /local.properties
 /.idea
+# build and local files
+/.gradle
+/app/build
+**/build
+/local.properties
+
+# keystore and artifacts
+*.jks
+*.keystore
+*.zip
+*.base64
+
+# IDE
+/.idea
+*.iml

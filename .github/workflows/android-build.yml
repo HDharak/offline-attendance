@@ -10,8 +10,13 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
+- name: Install prerequisites
+
+  env:
+    ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
+  run: |
+    mkdir -p "$ANDROID_SDK_ROOT"
+    # ... rest of commands
 
     steps:
     - name: Checkout

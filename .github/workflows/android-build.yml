@@ -63,14 +63,6 @@ jobs:
       run: |
         sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-    - name: Show installed SDK contents
-      env:
-        ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
-      run: |
-        ls -la "${ANDROID_SDK_ROOT}"
-        ls -la "${ANDROID_SDK_ROOT}/build-tools" || true
-        "${ANDROID_SDK_ROOT}/build-tools/34.0.0/aapt2" --version 2>/dev/null || echo "aapt2 check skipped or not executable"
-
     - name: Make gradlew executable
       run: chmod +x ./gradlew
 

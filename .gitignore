@@ -1,0 +1,9 @@
+# local keystore and build artifacts
+*.jks
+*.keystore
+*.zip
+*.base64
+# gradle / IDE
+/.gradle
+/local.properties
+/.idea
